@@ -1,5 +1,7 @@
 # CForum
 
+> 部署说明：当前 Fork 版本已移除 R2 绑定，图片上传接口暂时关闭；帖子、评论等功能仍需完成 Cloudflare 部署与配置后验证。
+
 一个基于 Cloudflare Workers + Pages + D1 + R2 的论坛，支持帖子、评论、图片上传、2FA 等。
 
 **💡 性能优化**：采用 Pages + Worker 混合部署，静态资源免费无限请求，节省 ~90% Worker 成本！
