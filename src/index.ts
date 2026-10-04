@@ -430,39 +430,9 @@ export default {
 			return true;
 		};
 
-		// POST /api/upload (Image Upload)
+		// Image uploads are disabled in the no-R2 deployment profile.
 		if (url.pathname === '/api/upload' && method === 'POST') {
-			try {
-				const user = await authenticate(request);
-				
-				const formData = await request.formData();
-				const file = formData.get('file');
-				const userId = user.id.toString(); // Use verified user ID
-				const postId = formData.get('post_id') || 'general';
-				const type = formData.get('type') || 'post';
-
-				if (!file || !(file instanceof File)) {
-					return jsonResponse({ error: 'No file uploaded' }, 400);
-				}
-
-				if (!file.type.startsWith('image/')) {
-					return jsonResponse({ error: 'Only images are allowed' }, 400);
-				}
-
-// Check file size (2MB = 2 * 1024 * 1024 bytes)
-			const MAX_SIZE = 2 * 1024 * 1024;
-			if (file.size > MAX_SIZE) {
-				return jsonResponse({ error: 'File size too large (Max 2MB)' }, 400);
-				}
-
-				const imageKey = await uploadImage(env as unknown as S3Env, file, userId, postId.toString(), type as 'post' | 'avatar');
-			const publicBase = (env as any).BUCKET ? `${getBaseUrl()}/r2` : undefined;
-			const imageUrl = getPublicUrl(env as unknown as S3Env, imageKey, publicBase);
-				return jsonResponse({ success: true, url: imageUrl });
-			} catch (e) {
-				console.error('Upload error:', e);
-				return handleError(e); // 401/403 will be caught here if auth fails
-			}
+			return jsonResponse({ error: 'Image uploads are temporarily disabled; this deployment does not use R2 storage.' }, 503);
 		}
 
 		// --- AUTH ROUTES ---
