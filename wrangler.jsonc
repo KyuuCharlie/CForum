@@ -23,16 +23,6 @@
 		}
 	],
 	/**
-	 * R2 Object Storage (for image uploads)
-	 * https://developers.cloudflare.com/r2/api/workers/workers-api-reference/
-	 */
-	"r2_buckets": [
-		{
-			"binding": "BUCKET",
-			"bucket_name": "cforum-images"
-		}
-	],
-	/**
 	 * Enable default *.workers.dev domain
 	 */
 	"workers_dev": true,
