@@ -167,6 +167,14 @@ export default {
 		const ensureSchema = async () => {
 			try {
 				await env.cforum_db.prepare('SELECT 1 FROM posts LIMIT 1').first();
+				const columns = await env.cforum_db.prepare('PRAGMA table_info(users)').all();
+				const names = new Set((columns.results || []).map((row: any) => row.name));
+				if (!names.has('verification_token_expires')) {
+					await env.cforum_db.prepare('ALTER TABLE users ADD COLUMN verification_token_expires INTEGER').run();
+				}
+				if (!names.has('verification_token_sent_at')) {
+					await env.cforum_db.prepare('ALTER TABLE users ADD COLUMN verification_token_sent_at INTEGER').run();
+				}
 				return;
 			} catch (err: any) {
 				console.warn('Database schema missing, initializing', err);
@@ -182,6 +190,8 @@ export default {
   role TEXT DEFAULT 'user',
   verified INTEGER DEFAULT 0,
   verification_token TEXT,
+  verification_token_expires INTEGER,
+  verification_token_sent_at INTEGER,
   totp_secret TEXT,
   totp_enabled INTEGER DEFAULT 0,
   reset_token TEXT,
@@ -1118,11 +1128,10 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 				if (user.verified) return jsonResponse({ error: 'User already verified' }, 400);
 
 				// Generate new token if needed, or use existing
-				let token = user.verification_token;
-				if (!token) {
-					token = generateToken();
-					await env.cforum_db.prepare('UPDATE users SET verification_token = ? WHERE id = ?').bind(token, id).run();
-				}
+				const token = generateToken();
+				const expires = Date.now() + 24 * 60 * 60 * 1000;
+				const sentAt = Date.now();
+				await env.cforum_db.prepare('UPDATE users SET verification_token = ?, verification_token_expires = ?, verification_token_sent_at = ? WHERE id = ? AND verified = 0').bind(token, expires, sentAt, id).run();
 
 				const baseUrl = getBaseUrl();
 				const verifyLink = `${baseUrl}/api/verify?token=${token}`;
@@ -1416,6 +1425,8 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 
 				const passwordHash = await hashPassword(password);
 				const verificationToken = generateToken();
+				const verificationExpires = Date.now() + 24 * 60 * 60 * 1000;
+				const verificationSentAt = Date.now();
 
 				// Pre-check email deliverability (Send a test email first)
 				// Note: We don't insert user yet. If email fails, we abort.
@@ -1441,8 +1452,8 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 				}
 
 				const { success, meta } = await env.cforum_db.prepare(
-					'INSERT INTO users (email, username, password, role, verified, verification_token) VALUES (?, ?, ?, "user", 0, ?)'
-				).bind(email, username, passwordHash, verificationToken).run();
+					'INSERT INTO users (email, username, password, role, verified, verification_token, verification_token_expires, verification_token_sent_at) VALUES (?, ?, ?, "user", 0, ?, ?, ?)'
+				).bind(email, username, passwordHash, verificationToken, verificationExpires, verificationSentAt).run();
 
 				if (success) {
 					// Generate Default Avatar (Identicon)
@@ -1468,6 +1479,37 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 			}
 		}
 
+		// AUTH: Resend Verification Email
+		if (url.pathname === '/api/auth/resend-verification' && method === 'POST') {
+			try {
+				const body = await request.json() as any;
+				const ip = request.headers.get('CF-Connecting-IP') || '127.0.0.1';
+				if (!(await checkTurnstile(body, ip))) return jsonResponse({ error: 'Turnstile verification failed' }, 403);
+				const email = String(body.email || '').trim();
+				if (!email || email.length > 50) return jsonResponse({ error: '请输入有效邮箱' }, 400);
+				const user = await env.cforum_db.prepare('SELECT id, email, username, verified, verification_token_sent_at FROM users WHERE email = ?').bind(email).first<DBUser & { verification_token_sent_at?: number }>();
+				if (!user || user.verified) return jsonResponse({ success: true, message: '如果账号需要验证，验证邮件会发送到该邮箱。' });
+				const lastSent = Number(user.verification_token_sent_at || 0);
+				if (lastSent && Date.now() - lastSent < 60 * 1000) return jsonResponse({ error: '请等待 60 秒后再重新发送' }, 429);
+				const token = generateToken();
+				const expires = Date.now() + 24 * 60 * 60 * 1000;
+				const sentAt = Date.now();
+				await env.cforum_db.prepare('UPDATE users SET verification_token = ?, verification_token_expires = ?, verification_token_sent_at = ? WHERE id = ? AND verified = 0').bind(token, expires, sentAt, user.id).run();
+				const baseUrl = getBaseUrl();
+				const verifyLink = baseUrl + '/api/verify?token=' + encodeURIComponent(token);
+				const emailHtml = '<h1>重新验证您的邮箱</h1><p>您好，' + user.username + '！请点击下方链接完成邮箱验证：</p><p><a href="' + verifyLink + '">验证邮箱</a></p><p>验证链接有效期为 24 小时。</p>';
+				try {
+					await sendEmail(email, '重新验证您的邮箱', emailHtml, env);
+				} catch (err) {
+					await env.cforum_db.prepare('UPDATE users SET verification_token = NULL, verification_token_expires = NULL, verification_token_sent_at = NULL WHERE id = ? AND verified = 0').bind(user.id).run();
+					throw err;
+				}
+				return jsonResponse({ success: true, message: '验证邮件已发送' });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
 		// AUTH: Verify Email
 		if (url.pathname === '/api/verify' && method === 'GET') {
 			const token = url.searchParams.get('token');
@@ -1476,9 +1518,24 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 			}
 
 			try {
+				const now = Date.now();
+				const user = await env.cforum_db.prepare(
+					'SELECT id, verification_token_expires FROM users WHERE verification_token = ? AND verified = 0'
+				).bind(token).first<{ id: number; verification_token_expires?: number }>();
+
+				if (!user) {
+					return new Response('token 无效或已使用', { status: 400 });
+				}
+				if (!user.verification_token_expires || now > Number(user.verification_token_expires)) {
+					await env.cforum_db.prepare(
+						'UPDATE users SET verification_token = NULL, verification_token_expires = NULL, verification_token_sent_at = NULL WHERE id = ?'
+					).bind(user.id).run();
+					return new Response('验证链接已过期，请重新发送验证邮件', { status: 400 });
+				}
+
 				const { success } = await env.cforum_db.prepare(
-					'UPDATE users SET verified = 1, verification_token = NULL WHERE verification_token = ?'
-				).bind(token).run();
+					'UPDATE users SET verified = 1, verification_token = NULL, verification_token_expires = NULL, verification_token_sent_at = NULL WHERE id = ? AND verified = 0'
+				).bind(user.id).run();
 
 				if (success) {
 					// Redirect to home page with verified param
