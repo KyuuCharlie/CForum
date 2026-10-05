@@ -15,7 +15,7 @@
 	}],
 	"workers_dev": true,
 	"env": {
-		"production": { "vars": { "WORKER_URL": "https://cforum.charliepointking.workers.dev" } },
+		"production": { "vars": { "WORKER_URL": "https://cforum.charliepointking.workers.dev", "BASE_URL": "https://sjjy.cc.cd" } },
 		"development": { "vars": { "WORKER_URL": "http://localhost:8787" } }
 	}
 }
