@@ -18,7 +18,7 @@ function htmlToText(html: string): string {
 function getEmailSender(env: any): { email: string; name: string } {
     const baseUrl = env?.BASE_URL;
     if (!baseUrl) {
-        throw new Error('BASE_URL environment variable is required for Cloudflare Email Service');
+        throw new Error('BASE_URL environment variable is required for Brevo email sending');
     }
 
     let hostname: string;
@@ -29,43 +29,77 @@ function getEmailSender(env: any): { email: string; name: string } {
     }
 
     if (!hostname || hostname.endsWith('.workers.dev') || hostname.endsWith('.pages.dev')) {
-        throw new Error('BASE_URL must be your custom domain before Cloudflare Email Service can send verification emails');
+        throw new Error('BASE_URL must use your custom domain for Brevo email sending');
     }
 
     return {
-        email: `noreply@${hostname}`,
-        name: DEFAULT_FROM_NAME,
+        email: env?.BREVO_SENDER_EMAIL || `noreply@${hostname}`,
+        name: env?.BREVO_SENDER_NAME || DEFAULT_FROM_NAME,
     };
 }
 
 /**
- * Send a transactional email through Cloudflare Email Service.
+ * Send a transactional email through Brevo's REST API.
  *
- * The Worker must have a send_email binding named EMAIL in wrangler.jsonc,
- * and the BASE_URL must point to the custom domain onboarded for Email Sending.
+ * Required Worker secret:
+ *   BREVO_API_KEY
+ *
+ * Optional Worker secrets:
+ *   BREVO_SENDER_EMAIL
+ *   BREVO_SENDER_NAME
+ *
+ * The sender must be verified in Brevo.
  */
 export async function sendEmail(to: string, subject: string, htmlContent: string, env?: any) {
-    console.log(`[Email] Sending via Cloudflare Email Service to ${to} - Subject: ${subject}`);
+    console.log(`[Email] Sending via Brevo to ${to} - Subject: ${subject}`);
 
-    if (!env?.EMAIL || typeof env.EMAIL.send !== 'function') {
-        throw new Error('Cloudflare Email Service EMAIL binding is not configured');
+    const apiKey = env?.BREVO_API_KEY;
+    if (!apiKey) {
+        throw new Error('BREVO_API_KEY secret is not configured');
     }
 
-    const from = getEmailSender(env);
+    const sender = getEmailSender(env);
     const text = htmlToText(htmlContent);
 
     try {
-        const response = await env.EMAIL.send({
-            to,
-            from,
-            subject,
-            html: htmlContent,
-            text,
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+            method: 'POST',
+            headers: {
+                accept: 'application/json',
+                'api-key': apiKey,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+                sender,
+                to: [{ email: to }],
+                subject,
+                htmlContent,
+                textContent: text,
+            }),
         });
 
-        console.log(`[Email] ✓ Cloudflare Email Service accepted message ${response.messageId || 'without message id'}`);
+        const bodyText = await response.text();
+        let body: any = null;
+        try {
+            body = bodyText ? JSON.parse(bodyText) : null;
+        } catch {
+            body = bodyText;
+        }
+
+        if (!response.ok) {
+            console.error('[Email] Brevo API failed:', response.status, body);
+            const message = typeof body === 'object' && body?.message
+                ? body.message
+                : bodyText || `HTTP ${response.status}`;
+            throw new Error(`Brevo 发送失败：${message}`);
+        }
+
+        console.log(`[Email] ✓ Brevo accepted message ${body?.messageId || 'without message id'}`);
     } catch (error: any) {
-        console.error('[Email] Cloudflare Email Service failed:', error);
-        throw new Error(`Cloudflare Email Service 发送失败：${error?.message || 'unknown error'}`);
+        console.error('[Email] Brevo request failed:', error);
+        if (error?.message?.startsWith('Brevo 发送失败：')) {
+            throw error;
+        }
+        throw new Error(`Brevo 发送失败：${error?.message || 'network error'}`);
     }
 }
