@@ -24,12 +24,7 @@ jobs:
         run: npm ci
 
       - name: Build frontend
-        run: |
-          npm run build:frontend
-          cat > public/_redirects <<'EOF'
-/posts/* /post.html?id=:splat 200
-/post/* /post.html?id=:splat 200
-EOF
+        run: npm run build:frontend
 
       - name: Ensure D1 database exists in current account
         run: |
