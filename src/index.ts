@@ -281,9 +281,11 @@ export default {
   ip_address TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`,
-				`INSERT OR IGNORE INTO settings (key, value) VALUES ('turnstile_enabled', '0');`,
-				`INSERT OR IGNORE INTO users (email, username, password, role, verified, nickname) VALUES 
-('admin@adysec.com', 'Admin', '管理员', 'admin:admin', 'e86f78a8a3caf0b60d8e74e5942aa6d86dc150cd3c03338aef25b7d2d7e3acc7', 'admin', 1, 'System Admin');`
+				`INSERT OR IGNORE INTO settings (key, value) VALUES ('turnstile_enabled', '0');
+				`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_identity_key ON users(identity_key);`,
+				`UPDATE users SET class_name = '管理员', identity_key = '管理员:' || lower(trim(username)) WHERE role = 'admin' AND class_name IS NULL;`,`,
+				`INSERT OR IGNORE INTO users (email, username, class_name, identity_key, password, role, verified, nickname) VALUES 
+('admin@adysec.com', 'Admin', '管理员', '管理员:admin', 'e86f78a8a3caf0b60d8e74e5942aa6d86dc150cd3c03338aef25b7d2d7e3acc7', 'admin', 1, 'System Admin');`
 			];
 			for (const stmt of stmts) {
 				try {
