@@ -10,7 +10,7 @@ import { getSecurityHeaders } from '@/lib/api';
 
 export function RegisterPage() {
 	const { config } = useConfig();
-	const [email, setEmail] = React.useState('');
+	const [className, setClassName] = React.useState('');
 	const [username, setUsername] = React.useState('');
 	const [password, setPassword] = React.useState('');
 	const [turnstileToken, setTurnstileToken] = React.useState('');
@@ -18,8 +18,6 @@ export function RegisterPage() {
 	const [loading, setLoading] = React.useState(false);
 	const [error, setError] = React.useState('');
 	const [success, setSuccess] = React.useState('');
-	const [resendLoading, setResendLoading] = React.useState(false);
-	const [resendMessage, setResendMessage] = React.useState('');
 
 	const enabled = !!config?.turnstile_enabled;
 	const siteKey = config?.turnstile_site_key || '';
@@ -40,7 +38,7 @@ export function RegisterPage() {
 				method: 'POST',
 				headers: getSecurityHeaders('POST'),
 				body: JSON.stringify({
-					email,
+					class_name: className,
 					username,
 					password,
 					'cf-turnstile-response': turnstileToken
@@ -52,8 +50,8 @@ export function RegisterPage() {
 				setTurnstileResetKey((v) => v + 1);
 				throw new Error(data?.error || '注册失败');
 			}
-			setSuccess('注册成功！请前往邮箱完成验证后再登录。');
-			setResendMessage('');
+			setSuccess('注册成功！请使用班级、姓名和密码登录。');
+			setClassName('');
 			setUsername('');
 			setPassword('');
 			setTurnstileToken('');
@@ -62,33 +60,6 @@ export function RegisterPage() {
 			setError(String(err?.message || err));
 		} finally {
 			setLoading(false);
-		}
-	}
-
-	async function handleResendVerification() {
-		setError('');
-		setResendMessage('');
-		if (!email) {
-			setError('请先填写注册邮箱');
-			return;
-		}
-		setResendLoading(true);
-		try {
-			const res = await fetch('/api/auth/resend-verification', {
-				method: 'POST',
-				headers: getSecurityHeaders('POST'),
-				body: JSON.stringify({
-				email,
-				'cf-turnstile-response': turnstileToken
-			})
-			});
-			const data = await res.json() as any;
-			if (!res.ok) throw new Error(data?.error || '重新发送失败');
-			setResendMessage('如果该邮箱存在且尚未验证，验证邮件已发送。');
-		} catch (err: any) {
-			setError(String(err?.message || err));
-		} finally {
-			setResendLoading(false);
 		}
 	}
 
@@ -103,10 +74,23 @@ export function RegisterPage() {
 						<form className="space-y-4" onSubmit={handleSubmit}>
 							{error ? <div className="rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm text-destructive">{error}</div> : null}
 							{success ? <div className="rounded-md border bg-muted/40 p-3 text-sm">{success}</div> : null}
-							{resendMessage ? <div className="rounded-md border bg-muted/40 p-3 text-sm">{resendMessage}</div> : null}
 
 							<div className="space-y-2">
-								<Label htmlFor="register-username">用户名 (最多 20 字符)</Label>
+								<Label htmlFor="register-class">班级</Label>
+								<Input
+									id="register-class"
+									name="class_name"
+									type="text"
+									maxLength={30}
+									placeholder="例如：高一 1 班"
+									value={className}
+									onChange={(e) => setClassName(e.target.value)}
+									required
+								/>
+							</div>
+
+							<div className="space-y-2">
+								<Label htmlFor="register-username">姓名</Label>
 								<Input
 									id="register-username"
 									name="username"
@@ -114,19 +98,6 @@ export function RegisterPage() {
 									maxLength={20}
 									value={username}
 									onChange={(e) => setUsername(e.target.value)}
-									required
-								/>
-							</div>
-
-							<div className="space-y-2">
-								<Label htmlFor="register-email">邮箱</Label>
-								<Input
-									id="register-email"
-									name="email"
-									type="email"
-									autoComplete="email"
-									value={email}
-									onChange={(e) => setEmail(e.target.value)}
 									required
 								/>
 							</div>
@@ -144,13 +115,7 @@ export function RegisterPage() {
 								/>
 							</div>
 
-<TurnstileWidget enabled={turnstileActive} siteKey={siteKey} onToken={setTurnstileToken} resetKey={turnstileResetKey} />
-
-							{success ? (
-								<Button className="w-full" type="button" variant="outline" disabled={resendLoading} onClick={handleResendVerification}>
-									{resendLoading ? '发送中...' : '重新发送验证邮件'}
-								</Button>
-							) : null}
+							<TurnstileWidget enabled={turnstileActive} siteKey={siteKey} onToken={setTurnstileToken} resetKey={turnstileResetKey} />
 
 							<Button className="w-full" type="submit" disabled={loading}>
 								{loading ? '处理中...' : '注册'}
