@@ -5,7 +5,6 @@
 	"compatibility_date": "2025-09-27",
 	"compatibility_flags": ["global_fetch_strictly_public"],
 	"observability": { "enabled": true },
-	"send_email": [{ "name": "EMAIL", "remote": true }],
 	"d1_databases": [{
 		"binding": "cforum_db",
 		"database_name": "cforum-db",
