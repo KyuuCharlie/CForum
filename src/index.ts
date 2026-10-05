@@ -9,6 +9,8 @@ interface DBUser {
     id: number;
     email: string;
     username: string;
+    class_name?: string;
+    identity_key?: string;
     password: string;
     verified: number;
     role?: string;
@@ -80,6 +82,10 @@ function isVisuallyEmpty(str: string): boolean {
 
 function hasInvisibleCharacters(str: string): boolean {
 	return /[\u200B-\u200F\uFEFF\u2028\u2029\u180E\u3164\u115F\u1160]/.test(str);
+}
+
+function normalizeIdentityPart(value: string): string {
+	return value.normalize('NFKC').trim().replace(/\\s+/g, ' ').toLowerCase();
 }
 
 function hasRestrictedKeywords(username: string): boolean {
@@ -175,6 +181,14 @@ export default {
 				if (!names.has('verification_token_sent_at')) {
 					await env.cforum_db.prepare('ALTER TABLE users ADD COLUMN verification_token_sent_at INTEGER').run();
 				}
+				if (!names.has('class_name')) {
+					await env.cforum_db.prepare('ALTER TABLE users ADD COLUMN class_name TEXT').run();
+				}
+				if (!names.has('identity_key')) {
+					await env.cforum_db.prepare('ALTER TABLE users ADD COLUMN identity_key TEXT').run();
+				}
+				await env.cforum_db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_identity_key ON users(identity_key)').run();
+				await env.cforum_db.prepare("UPDATE users SET class_name = '管理员' WHERE role = 'admin' AND class_name IS NULL").run();
 				return;
 			} catch (err: any) {
 				console.warn('Database schema missing, initializing', err);
@@ -186,6 +200,8 @@ export default {
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT NOT NULL UNIQUE,
   username TEXT NOT NULL,
+  class_name TEXT,
+  identity_key TEXT,
   password TEXT NOT NULL,
   role TEXT DEFAULT 'user',
   verified INTEGER DEFAULT 0,
@@ -267,7 +283,7 @@ export default {
 );`,
 				`INSERT OR IGNORE INTO settings (key, value) VALUES ('turnstile_enabled', '0');`,
 				`INSERT OR IGNORE INTO users (email, username, password, role, verified, nickname) VALUES 
-('admin@adysec.com', 'Admin', 'e86f78a8a3caf0b60d8e74e5942aa6d86dc150cd3c03338aef25b7d2d7e3acc7', 'admin', 1, 'System Admin');`
+('admin@adysec.com', 'Admin', '管理员', 'admin:admin', 'e86f78a8a3caf0b60d8e74e5942aa6d86dc150cd3c03338aef25b7d2d7e3acc7', 'admin', 1, 'System Admin');`
 			];
 			for (const stmt of stmts) {
 				try {
@@ -458,22 +474,21 @@ export default {
 					return jsonResponse({ error: 'Turnstile verification failed' }, 403);
 				}
 
-				const { email, password, totp_code } = body;
-				if (!email || !password) {
-					return jsonResponse({ error: 'Missing email or password' }, 400);
+				const { class_name, username, password, totp_code } = body;
+				if (!class_name || !username || !password) {
+					return jsonResponse({ error: '请输入班级、姓名和密码' }, 400);
 				}
+				const identityKey = normalizeIdentityPart(class_name) + ':' + normalizeIdentityPart(username);
 
 				const user = await env.cforum_db
-					.prepare('SELECT * FROM users WHERE email = ?')
-					.bind(email)
+					.prepare('SELECT * FROM users WHERE identity_key = ?')
+					.bind(identityKey)
 					.first<DBUser>();
 				if (!user) {
 					return jsonResponse({ error: 'Username or Password Error' }, 401);
 				}
 
-				if (!user.verified) {
-					return jsonResponse({ error: 'Please verify your email first' }, 403);
-				}
+				
 
 				const passwordHash = await hashPassword(password);
 				if (user.password !== passwordHash) {
@@ -509,7 +524,7 @@ export default {
 				});
 
 				await env.cforum_db.prepare('INSERT INTO sessions (jti, user_id, expires_at) VALUES (?, ?, ?)').bind(jti, user.id, expiresAt).run();
-				await security.logAudit(user.id, 'LOGIN', 'user', String(user.id), { email }, request);
+				await security.logAudit(user.id, 'LOGIN', 'user', String(user.id), { class_name, username }, request);
 
 				return jsonResponse({
 					token,
@@ -1394,118 +1409,48 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 		if (url.pathname === '/api/register' && method === 'POST') {
 			try {
 				const body = await request.json() as any;
-
-				// Turnstile Check
 				const ip = request.headers.get('CF-Connecting-IP') || '127.0.0.1';
-				if (!(await checkTurnstile(body, ip))) {
-					return jsonResponse({ error: 'Turnstile verification failed' }, 403);
-				}
+				if (!(await checkTurnstile(body, ip))) return jsonResponse({ error: '验证码验证失败，请重新完成验证码' }, 403);
 
-				const { email, username, password } = body;
-				if (!email || !username || !password) {
-					return jsonResponse({ error: 'Missing email, username or password' }, 400);
-				}
+				const rawClassName = String(body.class_name || '');
+				const rawUsername = String(body.username || '');
+				const password = String(body.password || '');
+				const className = rawClassName.normalize('NFKC').trim().replace(/\\s+/g, ' ');
+				const username = rawUsername.normalize('NFKC').trim().replace(/\\s+/g, ' ');
+				if (!className || !username || !password) return jsonResponse({ error: '请选择班级、填写姓名和密码' }, 400);
+				if (className.length > 30) return jsonResponse({ error: '班级名称过长（最多 30 个字符）' }, 400);
+				if (username.length > 20) return jsonResponse({ error: '姓名过长（最多 20 个字符）' }, 400);
+				if (isVisuallyEmpty(className) || isVisuallyEmpty(username)) return jsonResponse({ error: '班级和姓名不能为空' }, 400);
+				if (hasInvisibleCharacters(className) || hasInvisibleCharacters(username)) return jsonResponse({ error: '班级或姓名包含非法字符' }, 400);
+				if (hasControlCharacters(className) || hasControlCharacters(username)) return jsonResponse({ error: '班级或姓名包含非法控制字符' }, 400);
+				if (hasRestrictedKeywords(username)) return jsonResponse({ error: '姓名包含不允许的内容' }, 400);
+				if (password.length < 8 || password.length > 16) return jsonResponse({ error: '密码必须为 8-16 个字符' }, 400);
 
-				if (email.length > 50) return jsonResponse({ error: 'Email too long (Max 50 chars)' }, 400);
-
-				if (username.length > 20) return jsonResponse({ error: 'Username too long (Max 20 chars)' }, 400);
-				if (isVisuallyEmpty(username)) return jsonResponse({ error: 'Username cannot be empty' }, 400);
-				if (hasInvisibleCharacters(username)) return jsonResponse({ error: 'Username contains invalid invisible characters' }, 400);
-				if (hasControlCharacters(username)) return jsonResponse({ error: 'Username contains invalid control characters' }, 400);
-				if (hasRestrictedKeywords(username)) return jsonResponse({ error: 'Username contains restricted keywords' }, 400);
-
-				if (password.length < 8 || password.length > 16) return jsonResponse({ error: 'Password must be 8-16 characters' }, 400);
-
-				// Check Uniqueness (Combined Query for Performance)
-				const existing = await env.cforum_db.prepare('SELECT email, username FROM users WHERE email = ? OR username = ?').bind(email, username).first();
-				if (existing) {
-					if (existing.email === email) return jsonResponse({ error: 'Email already exists' }, 409);
-					return jsonResponse({ error: 'Username already taken' }, 409);
-				}
+				const identityKey = normalizeIdentityPart(className) + ':' + normalizeIdentityPart(username);
+				const existing = await env.cforum_db.prepare('SELECT id FROM users WHERE identity_key = ?').bind(identityKey).first();
+				if (existing) return jsonResponse({ error: '该班级已有同名账号，无法重复注册' }, 409);
 
 				const passwordHash = await hashPassword(password);
-				const verificationToken = generateToken();
-				const verificationExpires = Date.now() + 24 * 60 * 60 * 1000;
-				const verificationSentAt = Date.now();
-
-				// Pre-check email deliverability (Send a test email first)
-				// Note: We don't insert user yet. If email fails, we abort.
-				const baseUrl = getBaseUrl();
-				const verifyLink = `${baseUrl}/api/verify?token=${verificationToken}`;
-				
-				const emailHtml = `
-					<h1>欢迎加入论坛，${username}！</h1>
-					<p>请点击下方链接验证您的邮箱地址：</p>
-					<a href="${verifyLink}">验证邮箱</a>
-					<p>如果您未请求此操作，请忽略此邮件。</p>
-				`;
-
+				const syntheticEmail = 'student-' + crypto.randomUUID() + '@local.invalid';
 				try {
-					await sendEmail(email, '请验证您的邮箱', emailHtml, env);
-				} catch (e) {
-					console.error('[Registration Email Error]', e);
-					const errorMsg = e instanceof Error ? e.message : '未知错误';
-					return jsonResponse({ 
-						error: `验证邮件发送失败: ${errorMsg}`,
-						details: '请检查邮箱地址或联系管理员检查 SMTP 配置'
-					}, 400);
-				}
-
-				const { success, meta } = await env.cforum_db.prepare(
-					'INSERT INTO users (email, username, password, role, verified, verification_token, verification_token_expires, verification_token_sent_at) VALUES (?, ?, ?, "user", 0, ?, ?, ?)'
-				).bind(email, username, passwordHash, verificationToken, verificationExpires, verificationSentAt).run();
-
-				if (success) {
-					// Generate Default Avatar (Identicon)
-					// Use ID if available, otherwise fallback to Username
-					const userId = meta?.last_row_id;
-					if (userId) {
-						const identicon = await generateIdenticon(String(userId));
-						await env.cforum_db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').bind(identicon, userId).run();
-					} else {
-						// Fallback if ID retrieval fails (rare in D1)
-						const identicon = await generateIdenticon(username);
-						// We don't have ID easily without query, but we can update by username or just skip
-						await env.cforum_db.prepare('UPDATE users SET avatar_url = ? WHERE username = ?').bind(identicon, username).run();
+					const { success, meta } = await env.cforum_db.prepare(
+					'INSERT INTO users (email, username, class_name, identity_key, password, role, verified) VALUES (?, ?, ?, ?, ?, "user", 1)'
+				).bind(syntheticEmail, username, className, identityKey, passwordHash).run();
+					if (success) {
+						const userId = meta?.last_row_id;
+						if (userId) {
+							const identicon = await generateIdenticon(String(userId));
+							await env.cforum_db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').bind(identicon, userId).run();
+						}
 					}
+					return jsonResponse({ success, message: '注册成功，请使用班级、姓名和密码登录。' }, 201);
+				} catch (e: any) {
+					if (String(e?.message || e).includes('UNIQUE constraint failed: users.identity_key')) {
+						return jsonResponse({ error: '该班级已有同名账号，无法重复注册' }, 409);
+					}
+					throw e;
 				}
-
-				return jsonResponse({ success, message: '注册成功，请前往邮箱完成验证。' }, 201);
 			} catch (e: any) {
-				if (e.message && e.message.includes('UNIQUE constraint failed')) {
-					return jsonResponse({ error: 'Email already exists' }, 409);
-				}
-				return handleError(e);
-			}
-		}
-
-		// AUTH: Resend Verification Email
-		if (url.pathname === '/api/auth/resend-verification' && method === 'POST') {
-			try {
-				const body = await request.json() as any;
-				const ip = request.headers.get('CF-Connecting-IP') || '127.0.0.1';
-				if (!(await checkTurnstile(body, ip))) return jsonResponse({ error: 'Turnstile verification failed' }, 403);
-				const email = String(body.email || '').trim();
-				if (!email || email.length > 50) return jsonResponse({ error: '请输入有效邮箱' }, 400);
-				const user = await env.cforum_db.prepare('SELECT id, email, username, verified, verification_token_sent_at FROM users WHERE email = ?').bind(email).first<DBUser & { verification_token_sent_at?: number }>();
-				if (!user || user.verified) return jsonResponse({ success: true, message: '如果账号需要验证，验证邮件会发送到该邮箱。' });
-				const lastSent = Number(user.verification_token_sent_at || 0);
-				if (lastSent && Date.now() - lastSent < 60 * 1000) return jsonResponse({ error: '请等待 60 秒后再重新发送' }, 429);
-				const token = generateToken();
-				const expires = Date.now() + 24 * 60 * 60 * 1000;
-				const sentAt = Date.now();
-				await env.cforum_db.prepare('UPDATE users SET verification_token = ?, verification_token_expires = ?, verification_token_sent_at = ? WHERE id = ? AND verified = 0').bind(token, expires, sentAt, user.id).run();
-				const baseUrl = getBaseUrl();
-				const verifyLink = baseUrl + '/api/verify?token=' + encodeURIComponent(token);
-				const emailHtml = '<h1>重新验证您的邮箱</h1><p>您好，' + user.username + '！请点击下方链接完成邮箱验证：</p><p><a href="' + verifyLink + '">验证邮箱</a></p><p>验证链接有效期为 24 小时。</p>';
-				try {
-					await sendEmail(email, '重新验证您的邮箱', emailHtml, env);
-				} catch (err) {
-					await env.cforum_db.prepare('UPDATE users SET verification_token = NULL, verification_token_expires = NULL, verification_token_sent_at = NULL WHERE id = ? AND verified = 0').bind(user.id).run();
-					throw err;
-				}
-				return jsonResponse({ success: true, message: '验证邮件已发送' });
-			} catch (e) {
 				return handleError(e);
 			}
 		}
