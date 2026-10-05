@@ -1,17 +1,30 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const outputDir = path.resolve(__dirname, '..', 'public');
 
 export default defineConfig({
-	plugins: [react()],
+	plugins: [
+		react(),
+		{
+			name: 'generate-pages-redirects',
+			closeBundle() {
+				fs.writeFileSync(
+					path.join(outputDir, '_redirects'),
+					'/posts/* /post.html?id=:splat 200\n/post/* /post.html?id=:splat 200\n'
+				);
+			}
+		}
+	],
 	root: path.resolve(__dirname, 'pages'),
 	publicDir: false,
 	build: {
-		outDir: path.resolve(__dirname, '..', 'public'),
+		outDir: outputDir,
 		emptyOutDir: true,
 		assetsDir: 'assets',
 		modulePreload: {
