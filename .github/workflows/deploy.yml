@@ -76,24 +76,6 @@ jobs:
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
-      - name: Upload Brevo secrets (required for email)
-        if: ${{ secrets.BREVO_API_KEY != '' }}
-        run: |
-          echo "📧 Uploading Brevo email configuration..."
-          npx wrangler secret put BREVO_API_KEY --env="" <<< "$BREVO_API_KEY"
-          if [ -n "$BREVO_SENDER_EMAIL" ]; then
-            npx wrangler secret put BREVO_SENDER_EMAIL --env="" <<< "$BREVO_SENDER_EMAIL"
-          fi
-          if [ -n "$BREVO_SENDER_NAME" ]; then
-            npx wrangler secret put BREVO_SENDER_NAME --env="" <<< "$BREVO_SENDER_NAME"
-          fi
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
-          BREVO_SENDER_EMAIL: ${{ secrets.BREVO_SENDER_EMAIL }}
-          BREVO_SENDER_NAME: ${{ secrets.BREVO_SENDER_NAME }}
-
       - name: Upload Turnstile secrets (optional)
         run: |
           if [ -n "$TURNSTILE_SITE_KEY" ]; then
