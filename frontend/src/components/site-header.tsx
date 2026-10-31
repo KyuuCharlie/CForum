@@ -26,7 +26,7 @@ export function SiteHeader({
 		return () => window.removeEventListener('theme-change', onThemeChange as any);
 	}, []);
 	return (
-		<header className="w-full border-b bg-background">
+		<header className="lg-glass lg-glass-nav sticky top-0 z-40 w-full border-b bg-background/70" data-liquid-glass="true">
 			<div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4">
 				<a
 					href="/"
