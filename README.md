@@ -143,3 +143,7 @@ MIT License - 详见 [LICENSE](LICENSE)
 
 - 💬 欢迎提交 Issue 和 Pull Request
 - 🌟 如果有帮助，请 Star 本项目！
+
+## Halloween easter egg 🎃
+
+On any forum page, type `pumpkin` outside a text field to reveal a small Halloween modal. Press Escape or use its button to close it. The easter egg does not affect posts, accounts, or forum data.
