@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import * as React from 'react';
 import { initTheme } from '@/lib/theme';
 
-const LIQUID_GLASS_CSS = 'https://cdn.jsdelivr.net/gh/KyuuCharlie/liquid-glass-ui@9cc4efd239fd7a3e30e3800f4ae758baf835be44/styles/liquid-glass.css';
+const LIQUID_GLASS_CSS = 'https://cdn.jsdelivr.net/gh/KyuuCharlie/liquid-glass-ui@af94f55ed36754a85d5bbb9a010d90512d22d9f5/styles/liquid-glass.css';
 const HALLOWEEN_CSS = 'https://cdn.jsdelivr.net/gh/KyuuCharlie/liquid-glass-ui@main/styles/halloween.css';
 
 function loadStylesheet(href: string, marker: string) {
