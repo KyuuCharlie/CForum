@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { SiteHeader } from '@/components/site-header';
+import { HalloweenEgg } from '@/components/halloween-egg';
 import { getUser, type User } from '@/lib/auth';
 import { useConfig } from '@/hooks/use-config';
 
@@ -26,6 +27,7 @@ export function PageShell({
 	return (
 		<div className="min-h-dvh">
 			<SiteHeader currentUser={user} onLogout={() => setUser(null)} />
+			<HalloweenEgg />
 			{/* warning banner if jwt secret missing */}
 			{config && config.jwt_secret_configured === false && (
 				<div className="bg-yellow-200 text-yellow-800 px-4 py-2 text-sm">
